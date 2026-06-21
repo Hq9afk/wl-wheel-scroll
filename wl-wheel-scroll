@@ -1,66 +1,59 @@
 #!/usr/bin/env python3
 """
-wl-wheel-scroll.py
-Rim/circular scrolling daemon for Panasonic Let's Note wheel pad on Wayland.
-
-How it works:
-  - Grabs the real touchpad exclusively so libinput only sees virtual devices
-  - Creates two virtual devices:
-      tp  — full touchpad passthrough (cursor, taps); forwards events from the
-            real device, suppressing position updates while in the rim zone
-      scroll — minimal REL-only device; receives injected REL_WHEEL events
-  - Tracks finger angle in the rim zone and converts rotation to scroll ticks
-  - Blocking read_loop() means zero CPU when idle
-
-Dependencies (all in official Arch repos):
-  sudo pacman -S python-evdev
-
-Permissions:
-  sudo usermod -aG input $USER   # read /dev/input/event*
-  # Then enable uinput:
-  echo 'KERNEL=="uinput", MODE="0660", GROUP="input"' \
-    | sudo tee /etc/udev/rules.d/99-uinput.rules
-  sudo modprobe uinput
-  sudo udevadm control --reload && sudo udevadm trigger
-  # Log out and back in for group membership to take effect.
-
-Auto-detect touchpad:
-  Run with no arguments to auto-detect the Let's Note wheel pad.
-  Or specify the device path explicitly:
-    python wl-wheel-scroll.py /dev/input/event5
-
-Tuning:
-  Edit the constants below to adjust feel.
+wl-wheel-scroll — circular rim scrolling daemon for Wayland touchpads.
+Move your finger around the edge of the pad to scroll.
 """
 
 import sys
 import math
 import time
 import signal
+import configparser
+from pathlib import Path
 import evdev
 from evdev import InputDevice, UInput, ecodes as e
 
-#  Tuning constants 
+CONFIG_PATH = Path.home() / ".config" / "wl-wheel-scroll" / "config.ini"
 
-# Fraction of the pad's half-width that counts as "rim zone".
-# 0.65 means the outer 35% of the radius triggers rim scrolling.
-RIM_THRESHOLD = 0.65
+_DEFAULTS = {
+    "rim_threshold":    "0.75",
+    "angle_per_tick":   "0.15",
+    "scroll_speed":     "1",
+    "touch_timeout":    "0.5",
+    "horizontal_scroll": "false",
+}
 
-# Minimum accumulated angle (radians) before a scroll tick fires.
-# Smaller = more sensitive. 0.15 rad ≈ 8.6 degrees per tick.
-ANGLE_PER_TICK = 0.15
+def _write_default_config():
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        f.write(
+            "[scroll]\n"
+            "# outer fraction of pad radius that triggers rim scrolling (0-1)\n"
+            "rim_threshold = 0.75\n\n"
+            "# radians of rotation per scroll tick — smaller = more sensitive\n"
+            "angle_per_tick = 0.15\n\n"
+            "# REL_WHEEL units per tick\n"
+            "scroll_speed = 1\n\n"
+            "# seconds before state resets if touch is lost\n"
+            "touch_timeout = 0.5\n\n"
+            "# true to scroll horizontally instead of vertically\n"
+            "horizontal_scroll = false\n"
+        )
 
-# REL_WHEEL units emitted per tick. 1 is standard; increase for faster scroll.
-SCROLL_SPEED = 1
+def _load_config():
+    if not CONFIG_PATH.exists():
+        _write_default_config()
+    cfg = configparser.ConfigParser()
+    cfg["scroll"] = _DEFAULTS
+    cfg.read(CONFIG_PATH)
+    return cfg["scroll"]
 
-# If no touch event arrives for this many seconds, reset state.
-TOUCH_TIMEOUT = 0.5
-
-# Horizontal scroll: set True if you want left/right rim motion to scroll
-# horizontally instead of vertically (unusual, but possible).
-HORIZONTAL_SCROLL = False
-
-#  Device detection 
+_s = _load_config()
+RIM_THRESHOLD     = _s.getfloat("rim_threshold")
+ANGLE_PER_TICK    = _s.getfloat("angle_per_tick")
+SCROLL_SPEED      = _s.getint("scroll_speed")
+TOUCH_TIMEOUT     = _s.getfloat("touch_timeout")
+HORIZONTAL_SCROLL = _s.getboolean("horizontal_scroll")
 
 TOUCHPAD_KEYWORDS = ["synaptics"]
 
@@ -72,7 +65,7 @@ def find_touchpad():
             caps = dev.capabilities()
             has_abs = e.EV_ABS in caps
             name_match = any(k in name for k in TOUCHPAD_KEYWORDS)
-            # EV_ABS caps are (code, AbsInfo) tuples, not plain codes
+            # EV_ABS caps are (code, AbsInfo) tuples, not plain ints
             has_touch_axes = any(
                 code in (e.ABS_X, e.ABS_MT_POSITION_X)
                 for code, _ in caps.get(e.EV_ABS, [])
@@ -84,27 +77,19 @@ def find_touchpad():
             continue
     return None
 
-#  Geometry helpers 
-
 def angle_diff(a, b):
-    """Signed shortest angular distance from angle a to angle b, in [-π, π]."""
+    """Signed shortest angular distance in [-π, π]."""
     d = b - a
-    while d > math.pi:
-        d -= 2 * math.pi
-    while d < -math.pi:
-        d += 2 * math.pi
+    while d > math.pi:  d -= 2 * math.pi
+    while d < -math.pi: d += 2 * math.pi
     return d
-
-#  Main daemon 
 
 def run(dev):
     caps = dev.capabilities()
     abs_info = dict(caps.get(e.EV_ABS, []))
 
-    # Get pad coordinate ranges for normalisation
     xi = abs_info.get(e.ABS_X) or abs_info.get(e.ABS_MT_POSITION_X)
     yi = abs_info.get(e.ABS_Y) or abs_info.get(e.ABS_MT_POSITION_Y)
-
     if xi is None or yi is None:
         print("ERROR: Could not read touchpad axis ranges.", file=sys.stderr)
         sys.exit(1)
@@ -113,24 +98,21 @@ def run(dev):
     y_min, y_max = yi.min, yi.max
     cx = (x_min + x_max) / 2
     cy = (y_min + y_max) / 2
-    # Use the smaller half-range so the rim zone is circular not elliptical
+    # smaller axis keeps the rim zone circular, not elliptical
     r_max = min((x_max - x_min) / 2, (y_max - y_min) / 2)
-    rim_r = RIM_THRESHOLD * r_max
 
     print(f"Touchpad: {dev.name} ({dev.path})")
     print(f"  X range: {x_min}–{x_max}  Y range: {y_min}–{y_max}")
-    print(f"  Centre: ({cx:.0f}, {cy:.0f})  Rim radius: {rim_r:.0f} units")
+    print(f"  Centre: ({cx:.0f}, {cy:.0f})")
+    print(f"  Config:  {CONFIG_PATH}")
 
-    # tp_ui — full touchpad passthrough so libinput handles cursor and taps.
-    # Must include input_props from the real device for correct classification.
     tp_caps = dict(caps)
     tp_caps.pop(e.EV_SYN, None)
+    # input_props required so libinput classifies this as a touchpad
     tp_ui = UInput(tp_caps, name="wl-wheel-scroll-tp", version=0x1,
                    input_props=dev.input_props())
 
-    # scroll_ui — minimal REL-only device; libinput sees it as a scroll wheel.
-    # Keeping this separate from tp_ui avoids libinput ignoring REL_WHEEL on
-    # what it classifies as a touchpad.
+    # separate device so libinput doesn't ignore REL_WHEEL on a touchpad node
     scroll_ui = UInput(
         {e.EV_REL: [e.REL_WHEEL, e.REL_WHEEL_HI_RES, e.REL_HWHEEL, e.REL_HWHEEL_HI_RES]},
         name="wl-wheel-scroll",
@@ -140,14 +122,42 @@ def run(dev):
     print(f"  Scroll virt:   {scroll_ui.device.path}")
     print("Running — Ctrl-C to stop.\n")
 
-    tracking = False       # finger currently on pad
-    in_rim = False         # finger in rim zone
-    prev_angle = None      # last known angle (radians)
-    accum = 0.0            # accumulated angle delta
-    last_event_t = 0.0     # timestamp of last touch event
-    cur_x = cx             # current finger X
-    cur_y = cy             # current finger Y
-    pending = []           # events buffered since last SYN_REPORT
+    tracking = False
+    in_rim = False
+    prev_angle = None
+    accum = 0.0
+    last_event_t = 0.0
+    cur_x = cx
+    cur_y = cy
+    pending = []
+
+    cfg_mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0.0
+    rim_threshold     = RIM_THRESHOLD
+    angle_per_tick    = ANGLE_PER_TICK
+    scroll_speed      = SCROLL_SPEED
+    touch_timeout     = TOUCH_TIMEOUT
+    horizontal_scroll = HORIZONTAL_SCROLL
+    rim_r = rim_threshold * r_max
+
+    def reload_config():
+        nonlocal cfg_mtime, rim_threshold, angle_per_tick, scroll_speed
+        nonlocal touch_timeout, horizontal_scroll, rim_r
+        try:
+            mtime = CONFIG_PATH.stat().st_mtime
+        except OSError:
+            return
+        if mtime <= cfg_mtime:
+            return
+        cfg_mtime = mtime
+        s = _load_config()
+        rim_threshold     = s.getfloat("rim_threshold")
+        angle_per_tick    = s.getfloat("angle_per_tick")
+        scroll_speed      = s.getint("scroll_speed")
+        touch_timeout     = s.getfloat("touch_timeout")
+        horizontal_scroll = s.getboolean("horizontal_scroll")
+        rim_r = rim_threshold * r_max
+        print(f"Config reloaded: rim={rim_threshold} tick={angle_per_tick} "
+              f"speed={scroll_speed} timeout={touch_timeout} horiz={horizontal_scroll}")
 
     def reset():
         nonlocal tracking, in_rim, prev_angle, accum
@@ -158,14 +168,14 @@ def run(dev):
 
     def flush_scroll():
         nonlocal accum
-        ticks = int(accum / ANGLE_PER_TICK)
+        ticks = int(accum / angle_per_tick)
         if ticks == 0:
             return
-        accum -= ticks * ANGLE_PER_TICK
-        axis = e.REL_HWHEEL if HORIZONTAL_SCROLL else e.REL_WHEEL
-        axis_hi = e.REL_HWHEEL_HI_RES if HORIZONTAL_SCROLL else e.REL_WHEEL_HI_RES
-        scroll_ui.write(e.EV_REL, axis, ticks * SCROLL_SPEED)
-        scroll_ui.write(e.EV_REL, axis_hi, ticks * SCROLL_SPEED * 120)
+        accum -= ticks * angle_per_tick
+        axis    = e.REL_HWHEEL        if horizontal_scroll else e.REL_WHEEL
+        axis_hi = e.REL_HWHEEL_HI_RES if horizontal_scroll else e.REL_WHEEL_HI_RES
+        scroll_ui.write(e.EV_REL, axis,    ticks * scroll_speed)
+        scroll_ui.write(e.EV_REL, axis_hi, ticks * scroll_speed * 120)
         scroll_ui.syn()
 
     def forward_pending():
@@ -178,8 +188,9 @@ def run(dev):
         for event in dev.read_loop():
             now = time.monotonic()
 
-            # Timeout: finger lifted without BTN_TOUCH up (some pads miss it)
-            if tracking and (now - last_event_t) > TOUCH_TIMEOUT:
+            reload_config()
+
+            if tracking and (now - last_event_t) > touch_timeout:
                 reset()
 
             t = event.type
@@ -196,13 +207,13 @@ def run(dev):
 
             elif t == e.EV_KEY:
                 if c == e.BTN_TOUCH:
-                    if v == 1:   # finger down
+                    if v == 1:
                         tracking = True
                         last_event_t = now
                         prev_angle = None
                         accum = 0.0
                         in_rim = False
-                    else:        # finger up
+                    else:
                         flush_scroll()
                         reset()
                 pending.append(event)
@@ -217,20 +228,15 @@ def run(dev):
                     if currently_in_rim:
                         angle = math.atan2(dy, dx)
                         if not in_rim:
-                            # Entered rim zone — seed angle without scrolling
                             prev_angle = angle
                             in_rim = True
                         else:
                             if prev_angle is not None:
-                                diff = angle_diff(prev_angle, angle)
-                                accum -= diff
+                                accum -= angle_diff(prev_angle, angle)
                                 flush_scroll()
                             prev_angle = angle
-                        # Drop only position coordinates — forward everything
-                        # else (slot/tracking-ID assignments, pressure, key
-                        # events) so libinput's MT state stays intact.
-                        # Without ABS_MT_TRACKING_ID libinput never activates
-                        # the finger slot and ignores all subsequent positions.
+                        # drop position coords but keep slot/tracking-ID/pressure
+                        # so libinput's MT state stays intact
                         pos_codes = {e.ABS_X, e.ABS_Y,
                                      e.ABS_MT_POSITION_X, e.ABS_MT_POSITION_Y}
                         passthrough = [ev for ev in pending
@@ -273,12 +279,12 @@ def main():
             print(
                 "Could not auto-detect touchpad.\n"
                 "Run:  libinput list-devices\n"
-                "Then: python wl-wheel-scroll.py /dev/input/eventX",
+                "Then: wl-wheel-scroll /dev/input/eventX",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    dev.grab()  # exclusive grab so libinput sees only the virtual device
+    dev.grab()  # exclusive grab — libinput sees only the virtual devices
 
     def _exit(sig, frame):
         print("\nShutting down.")

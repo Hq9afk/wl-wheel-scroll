@@ -7,7 +7,7 @@ Built for the Panasonic Let's Note wheel pad but works on any touchpad with a ci
 ## Install
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/hq9afk/wl-wheel-scroll.git
 cd wl-wheel-scroll
 makepkg -si
 ```
@@ -36,12 +36,22 @@ sudo pacman -R wl-wheel-scroll
 
 ## Tuning
 
-Edit the constants at the top of `/usr/bin/wl-wheel-scroll`:
+Edit `~/.config/wl-wheel-scroll/config.ini` (created automatically on first run if absent). Changes are picked up live — no restart needed. Any keys missing from an existing file fall back to the defaults below.
 
-| Constant | Default | Description |
-|---|---|---|
-| `RIM_THRESHOLD` | `0.65` | How far from centre the rim zone starts (0–1) |
-| `ANGLE_PER_TICK` | `0.15` | Radians of rotation per scroll tick (~8.6°) |
-| `SCROLL_SPEED` | `1` | Scroll units per tick |
-| `TOUCH_TIMEOUT` | `0.5` | Seconds before state resets if touch is lost |
-| `HORIZONTAL_SCROLL` | `False` | Scroll horizontally instead of vertically |
+```ini
+[scroll]
+# outer fraction of pad radius that triggers rim scrolling (0-1)
+rim_threshold = 0.75
+
+# radians of rotation per scroll tick — smaller = more sensitive
+angle_per_tick = 0.15
+
+# REL_WHEEL units per tick
+scroll_speed = 1
+
+# seconds before state resets if touch is lost
+touch_timeout = 0.5
+
+# true to scroll horizontally instead of vertically
+horizontal_scroll = false
+```

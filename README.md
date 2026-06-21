@@ -28,6 +28,20 @@ Then enable the systemd user service:
 systemctl --user enable --now wl-wheel-scroll.service
 ```
 
+## Disable touchpad scrolling
+
+The script handles rim scrolling itself — disable your compositor's built-in touchpad scroll to avoid conflicts.
+
+**Hyprland** — add to `~/.config/hypr/hyprland.lua`:
+
+```lua
+hl.config({
+  input={
+    scroll_method="no_scroll"
+  }
+})
+```
+
 ## Uninstall
 
 ```sh

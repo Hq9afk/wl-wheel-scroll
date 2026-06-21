@@ -23,22 +23,11 @@ _DEFAULTS = {
     "horizontal_scroll": "false",
 }
 
+TEMPLATE_PATH = Path("/usr/share/wl-wheel-scroll/config.ini")
+
 def _write_default_config():
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
-        f.write(
-            "[scroll]\n"
-            "# outer fraction of pad radius that triggers rim scrolling (0-1)\n"
-            "rim_threshold = 0.75\n\n"
-            "# radians of rotation per scroll tick — smaller = more sensitive\n"
-            "angle_per_tick = 0.15\n\n"
-            "# REL_WHEEL units per tick\n"
-            "scroll_speed = 1\n\n"
-            "# seconds before state resets if touch is lost\n"
-            "touch_timeout = 0.5\n\n"
-            "# true to scroll horizontally instead of vertically\n"
-            "horizontal_scroll = false\n"
-        )
+    CONFIG_PATH.write_bytes(TEMPLATE_PATH.read_bytes())
 
 def _load_config():
     if not CONFIG_PATH.exists():

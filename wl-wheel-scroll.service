@@ -1,0 +1,13 @@
+[Unit]
+Description=Circular rim scrolling daemon for Wayland touchpads
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/wl-wheel-scroll
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

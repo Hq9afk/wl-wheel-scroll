@@ -6,12 +6,13 @@ pkgdesc="Circular rim scrolling daemon for touchpads on Wayland"
 arch=('any')
 license=('MIT')
 depends=('python' 'python-evdev')
+install=wl-wheel-scroll.install
 source=("wl-wheel-scroll"
         "wl-wheel-scroll.service"
         "99-uinput.rules"
         "config.ini")
 sha256sums=('fe39fb01f811040032eb2a0dadb671cca02fbdb658ab25e3fd2b6e9d037e6abe'
-            'ccd7b6f2fbd5fc6be4f8694e8c7155f1390192d9e68634bef9a14176cf00147a'
+            'ac6f0a1bda3b0d4c14d484bac80d19c8071ca3060d0a2e53b4f1ec54c342b098'
             '1536c6b31c712927bb493685323939b1c096fc378f341432dd99c9b2f7c5fbc4'
             'e40c63732346306a0cd6edc254468865fe539a9578d2a3768f50d36cba32b690')
 

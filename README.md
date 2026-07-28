@@ -9,24 +9,10 @@ Built for the Panasonic Let's Note wheel pad but works on any touchpad with a ci
 ```sh
 git clone https://github.com/hq9afk/wl-wheel-scroll.git
 cd wl-wheel-scroll
-makepkg -si
+./install
 ```
 
-Then run prerequisites:
-
-```bash
-sudo usermod -aG input $USER
-sudo modprobe uinput
-sudo udevadm control --reload && sudo udevadm trigger
-```
-
-Log out and back in for group membership to take effect.
-
-Then enable the systemd user service:
-
-```sh
-systemctl --user enable --now wl-wheel-scroll.service
-```
+This enables and starts the systemd user service. Log out and back in for group membership to take effect (fresh installs only).
 
 ## Disable touchpad scrolling
 
@@ -45,7 +31,7 @@ hl.config({
 ## Uninstall
 
 ```sh
-sudo pacman -R wl-wheel-scroll
+./uninstall
 ```
 
 ## Tuning

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+systemctl --user disable --now wl-wheel-scroll.service 2>/dev/null || true
+
+sudo rm -f /usr/bin/wl-wheel-scroll
+sudo rm -f /usr/lib/systemd/user/wl-wheel-scroll.service
+sudo rm -f /usr/lib/udev/rules.d/99-uinput.rules
+sudo rm -f /etc/modules-load.d/uinput.conf
+sudo rm -rf /usr/share/wl-wheel-scroll
+
+systemctl --user daemon-reload
+
+sudo udevadm control --reload
+sudo udevadm trigger
+
+echo "==> wl-wheel-scroll uninstalled. ~/.config/wl-wheel-scroll/config.ini was left in place."

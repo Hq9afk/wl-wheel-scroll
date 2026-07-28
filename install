@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$(readlink -f "$0")")"
+
+# Dependency Check
+python3 -c "import evdev" 2>/dev/null || {
+    echo "Missing dependency: python-evdev. Install it (e.g. 'sudo pacman -S python-evdev') and re-run." >&2
+    exit 1
+}
+
+# Pre-installation
+sudo usermod -aG input "$USER"
+sudo modprobe uinput
+echo uinput | sudo tee /etc/modules-load.d/uinput.conf >/dev/null
+
+# Installation
+sudo install -Dm755 wl-wheel-scroll /usr/bin/wl-wheel-scroll
+sudo install -Dm644 misc/wl-wheel-scroll.service /usr/lib/systemd/user/wl-wheel-scroll.service
+sudo install -Dm644 misc/99-uinput.rules /usr/lib/udev/rules.d/99-uinput.rules
+sudo install -Dm644 misc/config.ini /usr/share/wl-wheel-scroll/config.ini
+
+sudo udevadm control --reload
+sudo udevadm trigger
+
+systemctl --user daemon-reload
+systemctl --user enable wl-wheel-scroll.service
+systemctl --user restart wl-wheel-scroll.service
+
+cat <<EOF
+==> wl-wheel-scroll installed and service started.
+
+  Log out and back in for group membership to take effect if this is a fresh install.
+
+  Check it detected your touchpad with:
+       journalctl --user -u wl-wheel-scroll.service -b
+EOF
